@@ -1,0 +1,19 @@
+# Text is stored with LF line endings; the game reads LF and CRLF alike.
+* text=auto eol=lf
+
+# Binary assets: never touched by line-ending conversion or diffed as text.
+*.png binary
+*.tga binary
+*.blp binary
+*.jpg binary
+*.ttf binary
+*.ogg binary
+*.mp3 binary
+
+# Left out of GitHub's "Download ZIP" and release archives: a player's copy of the addon
+# needs neither the tests nor the developer tools.
+/tests export-ignore
+/tools export-ignore
+/.gitignore export-ignore
+/.gitattributes export-ignore
+/.github export-ignore

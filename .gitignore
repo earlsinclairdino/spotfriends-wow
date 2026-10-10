@@ -1,0 +1,21 @@
+# Operating systems and editors
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# Python (the tests and the icon converter)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Packaging output
+.release/
+*.zip
+
+# Local notes that never belong in the repository
+*.local.md

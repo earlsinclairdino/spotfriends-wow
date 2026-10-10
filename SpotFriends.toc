@@ -1,0 +1,22 @@
+## Interface: 16001
+## Title: SpotFriends
+## Notes: An icon next to your friends' nameplates, so you spot them in a crowd.
+## Author: earl.sinclair.dino
+## Version: 0.2.0
+## SavedVariables: SpotFriendsDB
+## AddonCompartmentFunc: SpotFriends_OpenSettings
+## IconTexture: Interface\AddOns\SpotFriends\Textures\gold-spot.png
+
+embeds.xml
+
+Icons.lua
+Resolver.lua
+Layout.lua
+Core.lua
+Friends.lua
+Nameplates.lua
+Options.lua
+UnitMenu.lua
+MinimapButton.lua
+Commands.lua
+Events.lua
