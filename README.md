@@ -17,12 +17,12 @@ does almost nothing for the ones that are not yours to mark.
 ## Installing
 
 1. Download the latest release, or **Code > Download ZIP** on this page.
-2. Unzip it into `World of Warcraft\_classic_beta_\Interface\AddOns\`.
+2. Unzip it into `World of Warcraft\_forever_\Interface\AddOns\`.
 3. The folder must be named **`SpotFriends`** (a GitHub ZIP unpacks as `SpotFriends-main`:
    rename it).
 4. Restart the game fully (a `/reload` does not pick up a new addon).
 
-Made for the WoW: Forever beta (interface 16001). It needs no other addon.
+Made for WoW: Forever (interface 16001). It needs no other addon.
 
 ## Using it
 
