@@ -215,5 +215,15 @@ SF.Resolver.Invalidate()
 Nameplates:OnAdded("nameplate2")
 Equal(SF.Resolver.Cached("Player-1-STR"), nil, "an unloaded name is not cached")
 
+-- A UnitFrame another addon moved off its plate shows nothing: no icon is made for it.
+units.nameplate9 = { player = true, guid = "Player-1-XAN", first = "Xanduin", second = "Laszwyn" }
+local moved = UnitFrame("nameplate9")
+moved.GetParent = function() return { elsewhere = true } end
+plates.nameplate9 = { UnitFrame = moved }
+SF.testMode = true
+Nameplates:OnAdded("nameplate9")
+SF.testMode = nil
+Equal(Nameplates.holders[moved], nil, "a frame off its plate gets no icon")
+
 Equal(Nameplates.errors, 0, "no errors")
 Expect.Done("nameplates")

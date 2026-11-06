@@ -260,6 +260,7 @@ function Stub.AddPlate(unit, fields)
 	uf.ClassificationFrame.shown = false
 	function uf:UpdateAnchors() end
 	local plate = { UnitFrame = uf, namePlateUnitToken = unit }
+	uf.parent = plate
 	Stub.plates[unit] = plate
 	return uf
 end

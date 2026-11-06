@@ -56,6 +56,12 @@ Check("right, level badge, offsets", State({ badge = BADGE, badgeWidth = 28 }), 
 	"badge", "LEFT", "CENTER", 14 + GAP + 3, -1)
 Check("right, level badge of unknown width", State({ badge = BADGE, badgeWidth = false }), "right", 0, 0,
 	"badge", "LEFT", "RIGHT", GAP, 0)
+Check("right, a right-justified level text as the badge", State({ badge = BADGE, badgeWidth = 14, badgeJustify = "RIGHT" }), "right", 0, 0,
+	"badge", "LEFT", "RIGHT", GAP, 0)
+Check("right, a left-justified level text as the badge", State({ badge = BADGE, badgeWidth = 14, badgeJustify = "LEFT" }), "right", 0, 0,
+	"badge", "LEFT", "LEFT", 14 + GAP, 0)
+Check("right, a centred level text as the badge", State({ badge = BADGE, badgeWidth = 14, badgeJustify = "CENTER" }), "right", 0, 0,
+	"badge", "LEFT", "CENTER", 7 + GAP, 0)
 Check("right, no badge", State({ badge = false }), "right", 0, 0,
 	"bar", "LEFT", "RIGHT", GAP, 0)
 Check("right, simplified", State({ nameShown = false }), "right", 0, 0, "bar", "LEFT", "RIGHT", GAP, 0)

@@ -681,6 +681,13 @@ local function Build()
 	y = y - ROW_HEIGHT - 6
 
 	y = BuildPreview(content, y)
+	if SF.platynator then
+		local note = Text(content, "GameFontHighlightSmall",
+			"Platynator draws your nameplates: the icon follows its designs, beside the name or after the bar. The preview above shows the game's own look.",
+			LIST_WIDTH)
+		note:SetPoint("TOPLEFT", LEFT, y + 6)
+		y = y - 30
+	end
 
 	y = Section(content, "Group", y - 6)
 	Checkbox(content, "Mark people in my group", "Party and raid members who are not your friends get the group icon. A friend keeps their own icon, and a character from the list below keeps theirs.",

@@ -13,7 +13,9 @@ Layout.INSIDE_BAR = 1   -- NamePlateConstants.NAME_ANCHOR_STYLES.InsideHealthBar
 --   nameShown, justify ("LEFT" | "CENTER" | "RIGHT"), textWidth (number or nil when unknown),
 --   barShown, style (the name anchor style), raidShown, classShown,
 --   badge (the level badge at the bar's right end, shown and laid out, or nil),
---   badgeWidth (its widest shown part, nil when unknown),
+--   badgeWidth (its widest shown part, nil when unknown), badgeJustify ("CENTER" when the
+--   width is around the badge's centre; "LEFT" / "RIGHT" for a text whose string starts at that
+--   edge of its region),
 -- }
 --- Returns anchorTo ("name" | "bar" | "badge" | "raid" | "class"), point, relativePoint, x, y,
 --- or nothing when the plate shows nothing the icon could sit beside.
@@ -27,10 +29,13 @@ function Layout.Plan(state, position, offsetX, offsetY)
 			-- the classic style): after it is after the plate. Its art can be wider than its
 			-- frame, so the icon starts half its widest part from its centre.
 			if state.badge then
-				if state.badgeWidth then
-					return "badge", "LEFT", "CENTER", state.badgeWidth / 2 + gap + ox, oy
+				local justify = state.badgeJustify or "CENTER"
+				if not state.badgeWidth or justify == "RIGHT" then
+					return "badge", "LEFT", "RIGHT", gap + ox, oy
+				elseif justify == "LEFT" then
+					return "badge", "LEFT", "LEFT", state.badgeWidth + gap + ox, oy
 				end
-				return "badge", "LEFT", "RIGHT", gap + ox, oy
+				return "badge", "LEFT", "CENTER", state.badgeWidth / 2 + gap + ox, oy
 			end
 			return "bar", "LEFT", "RIGHT", gap + ox, oy
 		end

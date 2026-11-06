@@ -56,6 +56,9 @@ local function Debug()
 		and table.concat(SF.UnitMenu.hooked, ", ") or "not available on this client",
 		SF.MinimapButton.object and (SF.MinimapButton:IsShown() and "shown" or "hidden") or "no libraries"))
 
+	if SF.platynator then
+		Print("nameplates drawn by Platynator v" .. tostring(SF.Platynator.version) .. ": icons sit on its frames")
+	end
 	local holders, active = SF.Nameplates:HolderCount()
 	Print(string.format("plates: %d icon frames (%d showing), %d answers cached (generation %d), %d errors%s",
 		holders, active, SF.Resolver.CacheSize(), SF.Resolver.generation, SF.Nameplates.errors,

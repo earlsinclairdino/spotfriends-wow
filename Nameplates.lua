@@ -2,9 +2,13 @@
 --
 -- Built for a crowded city: a non-player plate costs one UnitIsPlayer call; a stranger costs a
 -- GUID lookup after its first sight; nothing runs per frame. The icon frame (a "holder") is a
--- child of the plate's pooled UnitFrame, made the first time that UnitFrame shows an icon and
--- reused for every unit it shows afterwards. Positions follow Blizzard's own re-layouts through
--- hooks, and an anchor is only set again when the answer changes.
+-- child of the plate's frame, made the first time that frame shows an icon and reused for every
+-- unit it shows afterwards. Positions follow the plate's own re-layouts through hooks, and an
+-- anchor is only set again when the answer changes.
+--
+-- Which frame draws the plate is a "provider's" business: Blizzard's pooled UnitFrame (below), or
+-- a nameplate addon's own frame (Platynator.lua). A provider finds the frame for a unit, hooks its
+-- re-layouts, reads what it shows for Layout.Plan, and names the region and parent for an anchor.
 local _, SF = ...
 local Resolver, Layout, Icons = SF.Resolver, SF.Layout, SF.Icons
 
@@ -18,12 +22,14 @@ local UnitIsPlayer, UnitIsUnit, UnitGUID, UnitName = UnitIsPlayer, UnitIsUnit, U
 local GetUnitName = GetUnitName
 local pcall, pairs = pcall, pairs
 
-local holders = setmetatable({}, { __mode = "k" })   -- UnitFrame -> holder
-local hooked = setmetatable({}, { __mode = "k" })    -- UnitFrame -> true
-local players = {}                                   -- unit token -> UnitFrame, players on screen
-local state, subject = {}, {}                        -- reused for every plate
+local holders = setmetatable({}, { __mode = "k" })      -- plate frame -> holder
+local hooked = setmetatable({}, { __mode = "k" })       -- plate frame -> true
+local providerOf = setmetatable({}, { __mode = "k" })   -- plate frame -> provider
+local players = {}                                      -- unit token -> plate frame, players on screen
+local state, subject = {}, {}                           -- reused for every plate
+local providers = {}                                    -- asked in order; the first frame found wins
 
-Nameplates.players, Nameplates.holders = players, holders
+Nameplates.players, Nameplates.holders, Nameplates.providers = players, holders, providers
 Nameplates.errors = 0
 
 local function Report(err)
@@ -35,7 +41,7 @@ local function Report(err)
 end
 
 --------------------------------------------------------------------------------
--- Placing
+-- Reading a plate
 --------------------------------------------------------------------------------
 
 local function Number(value)
@@ -57,6 +63,12 @@ local function Measure(region, method)
 	if not ok then return nil end
 	return Number(value)
 end
+
+Nameplates.Shown, Nameplates.Measure = Shown, Measure
+
+--------------------------------------------------------------------------------
+-- The Blizzard provider: the plate's pooled UnitFrame
+--------------------------------------------------------------------------------
 
 -- The level badge at the bar's right end. Its frame can be narrower than its art (Forever's
 -- "13" badge drew past the frame's right edge, and an icon after that edge sat on the badge), so
@@ -117,67 +129,129 @@ local function BadgeWidth(badge)
 	return width > 0 and width or nil
 end
 
-local function ReadState(uf)
+local function ReadBlizzard(uf, s)
 	local name = uf.name
 	local container = uf.HealthBarsContainer
 	local bar = container and container.healthBar
-	state.nameShown = Shown(name)
-	state.justify = name and name:GetJustifyH() or "LEFT"
+	s.nameShown = Shown(name)
+	s.justify = name and name:GetJustifyH() or "LEFT"
 	local width = Measure(name, "GetStringWidth")
 	local frameWidth = Measure(name, "GetWidth")
 	if width and frameWidth and frameWidth > 0 and frameWidth < width then width = frameWidth end
-	state.textWidth = width
-	state.barShown = Shown(bar)
-	state.style = uf.previewStyle or (NamePlateSetupOptions and NamePlateSetupOptions.unitNameAnchorStyle)
-	state.raidShown = Shown(uf.RaidTargetFrame)
-	state.classShown = Shown(uf.ClassificationFrame)
-	state.badge, state.badgeWidth = nil, nil
+	s.textWidth = width
+	s.barShown = Shown(bar)
+	s.style = uf.previewStyle or (NamePlateSetupOptions and NamePlateSetupOptions.unitNameAnchorStyle)
+	s.raidShown = Shown(uf.RaidTargetFrame)
+	s.classShown = Shown(uf.ClassificationFrame)
+	s.badge, s.badgeWidth, s.badgeJustify = nil, nil, "CENTER"
 	for _, badge in ipairs(Badges(uf)) do
 		if Shown(badge) then
 			-- A badge with no anchor is drawn nowhere; one not answering is taken as laid out.
 			local points = Measure(badge, "GetNumPoints")
 			if points == nil or points > 0 then
-				state.badge, state.badgeWidth = badge, BadgeWidth(badge)
+				s.badge, s.badgeWidth = badge, BadgeWidth(badge)
 				break
 			end
 		end
 	end
-	return state
+	return s
 end
 
-local function Region(uf, anchorTo)
-	if anchorTo == "name" then return uf.name end
-	if anchorTo == "badge" then return state.badge end
-	if anchorTo == "raid" then return uf.RaidTargetFrame end
-	if anchorTo == "class" then return uf.ClassificationFrame end
-	return uf.HealthBarsContainer
+local Reposition
+
+local Blizzard = {
+	name = "blizzard",
+	-- A UnitFrame another addon moved off its plate (Platynator parents it to a hidden frame)
+	-- can show nothing.
+	Find = function(plate, unit, again)
+		local uf = plate.UnitFrame
+		if not uf then return nil, "retry" end
+		if uf.unit ~= unit and not again then return nil, "retry" end
+		if uf.IsForbidden and uf:IsForbidden() then return nil end
+		if uf.GetParent and uf:GetParent() ~= plate then return nil end
+		return uf
+	end,
+	Hook = function(uf)
+		if uf.UpdateAnchors then hooksecurefunc(uf, "UpdateAnchors", Reposition) end
+	end,
+	Read = ReadBlizzard,
+	Region = function(uf, anchorTo, s)
+		if anchorTo == "name" then return uf.name end
+		if anchorTo == "badge" then return s.badge end
+		if anchorTo == "raid" then return uf.RaidTargetFrame end
+		if anchorTo == "class" then return uf.ClassificationFrame end
+		return uf.HealthBarsContainer
+	end,
+	Parent = function(uf) return uf end,
+	Describe = function(uf, s)
+		return string.format("showOnly %s, simplified %s, badge %s", tostring(uf.showOnlyName),
+			tostring(uf.isSimplified), s.badge and (s.badge == uf.LevelFrame and "LevelFrame" or "another frame") or "none")
+	end,
+}
+Nameplates.Blizzard = Blizzard
+providers[1] = Blizzard
+
+--- Puts `provider` before Blizzard's: the frame it finds is the one that draws the plate.
+function Nameplates:AddProvider(provider)
+	for i, known in ipairs(providers) do
+		if known == provider then return end
+		if known == Blizzard then
+			table.insert(providers, i, provider)
+			return
+		end
+	end
+	providers[#providers + 1] = provider
+end
+
+--------------------------------------------------------------------------------
+-- Placing
+--------------------------------------------------------------------------------
+
+local function ProviderOf(frame)
+	return providerOf[frame] or Blizzard
+end
+
+local function Adopt(holder, parent)
+	if holder.parent == parent then return end
+	holder.parent = parent
+	holder:SetParent(parent)
+	holder:SetFrameLevel((parent.GetFrameLevel and parent:GetFrameLevel() or 0) + 10)
+	-- A new parent may be scaled differently: the size is set again in that space.
+	if holder.size then holder:SetSize(holder.size, holder.size) end
 end
 
 --- Puts `holder` where Layout says, touching its anchor only when the answer changed.
 --- Shared with the settings page's preview, which passes a stand-in for the UnitFrame.
-function Nameplates.Place(uf, holder, db)
-	local anchorTo, point, relative, x, y = Layout.Plan(ReadState(uf), db.position, db.offsetX, db.offsetY)
+function Nameplates.Place(frame, holder, db)
+	local provider = ProviderOf(frame)
+	local anchorTo, point, relative, x, y = Layout.Plan(provider.Read(frame, state), db.position, db.offsetX, db.offsetY)
 	if not anchorTo then
 		holder.anchorTo = nil
 		holder:Hide()
 		return
 	end
+	local parent = provider.Parent(frame, anchorTo, state)
+	if parent and parent ~= holder.parent then
+		Adopt(holder, parent)
+		holder.anchorTo = nil
+	end
 	if anchorTo ~= holder.anchorTo or point ~= holder.point or relative ~= holder.relative
 		or x ~= holder.x or y ~= holder.y then
 		holder:ClearAllPoints()
-		holder:SetPoint(point, Region(uf, anchorTo), relative, x, y)
+		holder:SetPoint(point, provider.Region(frame, anchorTo, state), relative, x, y)
 		holder.anchorTo, holder.point, holder.relative, holder.x, holder.y = anchorTo, point, relative, x, y
 	end
 	holder:Show()
 end
 
-local function Reposition(uf)
-	local holder = holders[uf]
+Reposition = function(frame)
+	local holder = holders[frame]
 	if holder and holder.active then
-		local ok, err = pcall(Nameplates.Place, uf, holder, SF.DB())
+		local ok, err = pcall(Nameplates.Place, frame, holder, SF.DB())
 		if not ok then Report(err) end
 	end
 end
+Nameplates.Reposition = Reposition
 
 --------------------------------------------------------------------------------
 -- Which icon
@@ -200,20 +274,21 @@ local function Lookup(unit, db)
 	return key
 end
 
-local function NewHolder(uf)
-	local holder = CreateFrame("Frame", nil, uf)
-	holder:SetFrameLevel(uf:GetFrameLevel() + 10)
-	local icon = holder:CreateTexture(nil, "OVERLAY")
+local function NewHolder(frame)
+	local holder = CreateFrame("Frame", nil, frame)
+	holder.parent = frame
+	holder:SetFrameLevel(frame:GetFrameLevel() + 10)
+	local icon = holder:CreateTexture(nil, "OVERLAY", nil, 7)
 	icon:SetAllPoints()
 	holder.icon = icon
 	holder:Hide()
-	holders[uf] = holder
+	holders[frame] = holder
 	return holder
 end
 
 local function Update(unit)
-	local uf = players[unit]
-	if not uf then return end
+	local frame = players[unit]
+	if not frame then return end
 	local db = SF.DB()
 	local key
 	if db.enabled then
@@ -223,7 +298,7 @@ local function Update(unit)
 			key = Lookup(unit, db)
 		end
 	end
-	local holder = holders[uf]
+	local holder = holders[frame]
 	if not key then
 		if holder and holder.active then
 			holder.active = false
@@ -231,7 +306,7 @@ local function Update(unit)
 		end
 		return
 	end
-	holder = holder or NewHolder(uf)
+	holder = holder or NewHolder(frame)
 	if holder.key ~= key then
 		holder.key = key
 		holder.icon:SetTexture(Icons.Path(key) or Icons.Path(Icons.Default()))
@@ -242,36 +317,45 @@ local function Update(unit)
 	end
 	holder.unit = unit
 	holder.active = true
-	Nameplates.Place(uf, holder, db)
+	Nameplates.Place(frame, holder, db)
 end
 
 local function SafeUpdate(unit)
 	local ok, err = pcall(Update, unit)
 	if not ok then Report(err) end
 end
+Nameplates.SafeUpdate = SafeUpdate
 
 --------------------------------------------------------------------------------
 -- Plates coming and going
 --------------------------------------------------------------------------------
 
-local OnAnchors = function(uf) Reposition(uf) end
-
--- Blizzard's driver acquires the UnitFrame on the same event; should this addon hear it first,
--- the plate is looked at again on the next frame.
+-- Blizzard's driver (and a nameplate addon) set the plate up on the same event; should this
+-- addon hear it first, the plate is looked at again on the next frame.
 local pending, pendingQueued = {}, false
+
+local function FindFrame(plate, unit, again)
+	local wantRetry = false
+	for _, provider in ipairs(providers) do
+		local frame, status = provider.Find(plate, unit, again)
+		if frame then return frame, provider end
+		if status == "retry" then wantRetry = true end
+	end
+	return nil, nil, wantRetry
+end
 
 local function Added(unit, again)
 	local plate = GetNamePlateForUnit and GetNamePlateForUnit(unit)
-	local uf = plate and plate.UnitFrame
-	if not uf then return false end
-	if uf.unit ~= unit and not again then return false end
-	if uf.IsForbidden and uf:IsForbidden() then return true end
+	if not plate then return false end
 	if not Known(UnitIsPlayer(unit)) or Known(UnitIsUnit(unit, "player")) then return true end
-	if not hooked[uf] and uf.UpdateAnchors then
-		hooked[uf] = true
-		hooksecurefunc(uf, "UpdateAnchors", OnAnchors)
+	local frame, provider, wantRetry = FindFrame(plate, unit, again)
+	if not frame then return not (wantRetry and not again) end
+	providerOf[frame] = provider
+	if not hooked[frame] then
+		hooked[frame] = true
+		provider.Hook(frame)
 	end
-	players[unit] = uf
+	players[unit] = frame
 	SafeUpdate(unit)
 	return true
 end
@@ -300,13 +384,27 @@ end
 
 function Nameplates:OnRemoved(unit)
 	pending[unit] = nil
-	local uf = players[unit]
-	if not uf then return end
+	local frame = players[unit]
+	if not frame then return end
 	players[unit] = nil
-	local holder = holders[uf]
+	local holder = holders[frame]
 	if holder and holder.active then
 		holder.active = false
 		holder:Hide()
+	end
+end
+
+--- A provider's frame shows another unit now, or none: the icon follows on the next frame.
+function Nameplates:OnFrameUnit(frame, unit)
+	for token, known in pairs(players) do
+		if known == frame and token ~= unit then self:OnRemoved(token) end
+	end
+	if unit and not players[unit] then
+		pending[unit] = true
+		if not pendingQueued then
+			pendingQueued = true
+			C_Timer.After(0, RunPending)
+		end
 	end
 end
 
@@ -317,30 +415,36 @@ function Nameplates:OnNameChanged(unit)
 end
 
 -- A simplified plate shows its name only while targeted: the old and the new target move, after
--- Blizzard has redrawn them this frame.
+-- the plate has been redrawn this frame.
 local dirty, dirtyQueued, lastTarget = {}, false, nil
 
 local function RunDirty()
 	dirtyQueued = false
-	for uf in pairs(dirty) do
-		dirty[uf] = nil
-		Reposition(uf)
+	for frame in pairs(dirty) do
+		dirty[frame] = nil
+		Reposition(frame)
 	end
 end
 
-local function MarkDirty(uf)
-	if not uf or not holders[uf] then return end
-	dirty[uf] = true
+local function MarkDirty(frame)
+	if not frame or not holders[frame] then return end
+	dirty[frame] = true
 	if not dirtyQueued then
 		dirtyQueued = true
 		C_Timer.After(0, RunDirty)
 	end
 end
+Nameplates.MarkDirty = MarkDirty
 
 function Nameplates:OnTargetChanged()
 	MarkDirty(lastTarget)
-	local plate = GetNamePlateForUnit and GetNamePlateForUnit("target")
-	lastTarget = plate and plate.UnitFrame or nil
+	lastTarget = nil
+	for unit, frame in pairs(players) do
+		if Known(UnitIsUnit(unit, "target")) then
+			lastTarget = frame
+			break
+		end
+	end
 	MarkDirty(lastTarget)
 end
 
@@ -409,6 +513,10 @@ function Nameplates:HolderCount()
 	return count, active
 end
 
+--------------------------------------------------------------------------------
+-- For the debug commands
+--------------------------------------------------------------------------------
+
 local function Show(v)
 	if v ~= nil and issecretvalue and issecretvalue(v) then return "<secret>" end
 	return tostring(v)
@@ -416,25 +524,28 @@ end
 
 local function Describe(unit)
 	local plate = GetNamePlateForUnit and GetNamePlateForUnit(unit)
-	local uf = players[unit] or (plate and plate.UnitFrame)
+	local frame = players[unit]
 	local first, second = UnitName(unit)
 	local whole = GetUnitName and GetUnitName(unit, true) or nil
 	local line = string.format("%s: %s / %s + %s, guid %s, player %s", unit,
 		Show(whole), Show(first), Show(second), Show(UnitGUID(unit)), Show(UnitIsPlayer(unit)))
-	if not uf then return line .. ", no unit frame" end
-	if uf.IsForbidden and uf:IsForbidden() then return line .. ", forbidden" end
-	local s = ReadState(uf)
-	line = line .. string.format(", showOnly %s, simplified %s, name %s %s w=%s, bar %s, badge %s, style %s",
-		Show(uf.showOnlyName), Show(uf.isSimplified), Show(s.nameShown), Show(s.justify),
-		s.textWidth and string.format("%.0f", s.textWidth) or "?", Show(s.barShown),
-		s.badge and ((s.badge == uf.LevelFrame and "LevelFrame" or "another frame")
-			.. (s.badgeWidth and string.format(" w=%.0f", s.badgeWidth) or "")) or "none", Show(s.style))
+	if not frame then
+		local uf = plate and plate.UnitFrame
+		if not uf then return line .. ", no unit frame" end
+		if uf.IsForbidden and uf:IsForbidden() then return line .. ", forbidden" end
+		return line .. ", not tracked"
+	end
+	local provider = ProviderOf(frame)
+	local s = provider.Read(frame, state)
+	line = line .. string.format(", %s plate: name %s %s w=%s, bar %s, style %s, %s", provider.name,
+		Show(s.nameShown), Show(s.justify), s.textWidth and string.format("%.0f", s.textWidth) or "?",
+		Show(s.barShown), Show(s.style), provider.Describe and provider.Describe(frame, s) or "")
 	subject.guid = Known(UnitGUID(unit))
 	subject.whole, subject.first, subject.second = whole, first, second
 	local key, source, record = Resolver.Resolve(SF.DB(), SF.Friends.index, subject)
 	line = line .. string.format(", icon %s from %s%s", Show(key), Show(source),
 		record and (" (" .. tostring(record.id) .. ")") or "")
-	local holder = holders[uf]
+	local holder = holders[frame]
 	if holder then
 		line = line .. string.format(", holder %s at %s %s %s", holder:IsShown() and "shown" or "hidden",
 			tostring(holder.anchorTo), tostring(holder.relative), holder.x and string.format("%.1f", holder.x) or "")
@@ -454,21 +565,29 @@ end
 --- else the first player plate on screen.
 function Nameplates:Dump()
 	local plate = GetNamePlateForUnit and GetNamePlateForUnit("target")
-	local uf, unit = plate and plate.UnitFrame, "target"
-	if not uf then
-		for token, candidate in pairs(players) do uf, unit = candidate, token; break end
+	local unit = plate and "target"
+	if not plate then
+		for token in pairs(players) do
+			unit, plate = token, GetNamePlateForUnit(token)
+			break
+		end
 	end
-	if not uf then return { "no player nameplate: target a player or stand near one" } end
+	if not plate then return { "no player nameplate: target a player or stand near one" } end
+	local uf = plate.UnitFrame
 	local names = {}
-	for key, value in pairs(uf) do
-		if type(value) == "table" and type(key) == "string" then names[value] = key end
+	if uf then
+		for key, value in pairs(uf) do
+			if type(value) == "table" and type(key) == "string" then names[value] = key end
+		end
+		local container = uf.HealthBarsContainer
+		if container then
+			names[container.healthBar or false] = "HealthBarsContainer.healthBar"
+			if container.healthBar then names[container.healthBar.bgTexture or false] = "healthBar.bgTexture" end
+		end
+		names[uf] = "UnitFrame"
 	end
-	local container = uf.HealthBarsContainer
-	if container then
-		names[container.healthBar or false] = "HealthBarsContainer.healthBar"
-		if container.healthBar then names[container.healthBar.bgTexture or false] = "healthBar.bgTexture" end
-	end
-	if holders[uf] then names[holders[uf]] = "SpotFriends icon" end
+	names[plate] = "NamePlate"
+	for _, holder in pairs(holders) do names[holder] = "SpotFriends icon" end
 	local whole = Known(GetUnitName and GetUnitName(unit, true))
 	local lines = { string.format("the nameplate of %s (%s): its parts, as size and anchors", tostring(whole or "?"), unit) }
 	local function Describe(region, label)
@@ -476,6 +595,8 @@ function Nameplates:Dump()
 		local parts = { string.format("%s %s %s", label, kind, Shown(region) and "shown" or "hidden") }
 		local w, h = Measure(region, "GetWidth"), Measure(region, "GetHeight")
 		parts[#parts + 1] = string.format("%sx%s", w and string.format("%.0f", w) or "?", h and string.format("%.0f", h) or "?")
+		local scale = Measure(region, "GetScale")
+		if scale and scale ~= 1 then parts[#parts + 1] = string.format("scale %.2f", scale) end
 		local text = region.GetText and Known(region:GetText())
 		if type(text) == "string" and text ~= "" then parts[#parts + 1] = string.format("%q", text) end
 		local count = Measure(region, "GetNumPoints") or 0
@@ -483,23 +604,31 @@ function Nameplates:Dump()
 			local ok, point, relativeTo, relativePoint, x, y = pcall(region.GetPoint, region, i)
 			if ok then
 				parts[#parts + 1] = string.format("%s>%s.%s(%s,%s)", tostring(point),
-					relativeTo and (names[relativeTo] or (relativeTo == uf and "UnitFrame") or "?") or "nil",
+					relativeTo and (names[relativeTo] or "?") or "nil",
 					tostring(relativePoint), tostring(Number(x) or "?"), tostring(Number(y) or "?"))
 			end
 		end
 		lines[#lines + 1] = table.concat(parts, " ")
 	end
-	local function Each(owner, prefix, ...)
+	local function Each(prefix, ...)
 		for i = 1, select("#", ...) do
 			local region = select(i, ...)
 			Describe(region, prefix .. (names[region] or ("#" .. i)))
 		end
 	end
-	Each(uf, "", uf:GetChildren())
-	Each(uf, "region ", uf:GetRegions())
-	if type(uf.LevelFrame) == "table" then
-		Each(uf.LevelFrame, "LevelFrame/", uf.LevelFrame:GetRegions())
-		Each(uf.LevelFrame, "LevelFrame/", uf.LevelFrame:GetChildren())
+	local frame = players[unit]
+	local provider = frame and providerOf[frame]
+	if provider and provider.Dump then
+		provider.Dump(plate, frame, Describe, names)
+	elseif uf then
+		Each("", uf:GetChildren())
+		Each("region ", uf:GetRegions())
+		if type(uf.LevelFrame) == "table" then
+			Each("LevelFrame/", uf.LevelFrame:GetRegions())
+			Each("LevelFrame/", uf.LevelFrame:GetChildren())
+		end
+	else
+		lines[#lines + 1] = "the plate has no UnitFrame and no tracked frame"
 	end
 	return lines
 end

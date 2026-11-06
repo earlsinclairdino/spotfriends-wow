@@ -22,7 +22,9 @@ does almost nothing for the ones that are not yours to mark.
    rename it).
 4. Restart the game fully (a `/reload` does not pick up a new addon).
 
-Made for WoW: Forever (interface 16001). It needs no other addon.
+Made for WoW: Forever (interface 16001). It needs no other addon, and works with **Platynator**
+nameplates as well as the game's own: the icon sits on Platynator's plate, beside the name or after
+the bar and level, whatever design you gave friendly players.
 
 ## Using it
 
@@ -70,6 +72,8 @@ When several rules apply, the first wins:
 - **Dungeons and raids.** Friendly nameplates there are protected; addons cannot touch them.
 - **Secret values.** Where the game hides a unit's name or identity from addons, that nameplate
   gets no icon.
+- **Other nameplate addons.** Platynator is supported. With another nameplate addon that hides the
+  game's plates, the icon has nothing to sit on; open an issue with `/spotfriends plate`.
 
 ## Reporting a problem
 
@@ -82,6 +86,11 @@ icon is placed from the nameplate's parts, and that list shows them.
 
 - Plain Lua, no build step. Files load in the order `SpotFriends.toc` lists them; `embeds.xml`
   loads the libraries first.
+- `Nameplates.lua` works through a "provider": who draws the plate answers how to find its frame
+  for a unit, hook its re-layouts, read what it shows and name the region and parent for an
+  anchor. The game's own plates are the built-in provider; `Platynator.lua` is the one for
+  Platynator (found among the plate's children by its `widgets` list; the icon becomes a child of
+  the widget it sits beside, so it takes that widget's scale and visibility).
 - `Icons.lua`, `Resolver.lua` and `Layout.lua` make no calls to the game, so the tests run them
   directly. `Nameplates.lua` hooks the game's nameplates; `Options.lua` is the settings page;
   `UnitMenu.lua` the right-click entries; `MinimapButton.lua` the minimap button.
